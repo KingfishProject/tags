@@ -1,0 +1,57 @@
+name: Check tags
+
+# Runs on every pull request and every push to main. Checks the tag files and,
+# for pull requests, previews what the next release would change in Ghost.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check tag files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/validate.js
+
+  preview:
+    name: Preview changes in Ghost
+    needs: check
+    # Secrets aren't available to pull requests from forks.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Fetch last-deployed state
+        run: |
+          if git fetch --quiet --depth=1 origin ghost-state; then
+            git show FETCH_HEAD:state.json > "$RUNNER_TEMP/state.json"
+          else
+            echo "Nothing has been deployed yet."
+          fi
+      - name: Preview
+        env:
+          GHOST_API_URL: ${{ secrets.GHOST_API_URL }}
+          GHOST_ADMIN_API_KEY: ${{ secrets.GHOST_ADMIN_API_KEY }}
+        run: |
+          if [ -z "$GHOST_ADMIN_API_KEY" ]; then
+            echo "::notice::Ghost secrets aren't set, so the preview was skipped."
+            exit 0
+          fi
+          node scripts/deploy.js --mode release --dry-run --source "PR #${{ github.event.pull_request.number }}" --state "$RUNNER_TEMP/state.json"
