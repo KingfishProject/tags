@@ -42,9 +42,20 @@ export function adminApiBase(siteUrl) {
   return `${url}/ghost/api/admin`;
 }
 
-function describeGhostError(status, body) {
+function describeGhostError(status, body, res) {
   const first = body?.errors?.[0];
-  if (!first) return `Ghost API returned HTTP ${status}`;
+  if (!first) {
+    // Not a Ghost error, so something in front of Ghost answered instead.
+    const server = res?.headers?.get?.('server');
+    const via = server ? ` from "${server}"` : '';
+    const hint =
+      status === 403 || status === 503
+        ? ' Something in front of Ghost (often Cloudflare bot protection or a firewall rule) is blocking the request. Let requests to /ghost/api/admin/ through for GitHub Actions.'
+        : status === 404
+          ? ' Check that GHOST_API_URL is the address Ghost Admin runs on, not a separate front-end site.'
+          : '';
+    return `HTTP ${status}${via}, not a response from Ghost.${hint}`;
+  }
   return [first.message, first.context, first.help].filter(Boolean).join(' — ') + ` (HTTP ${status})`;
 }
 
@@ -99,7 +110,7 @@ export function createGhostClient({
         data = null;
       }
       if (!res.ok) {
-        throw new GhostApiError(`${method} ${path}: ${describeGhostError(res.status, data)}`, {
+        throw new GhostApiError(`${method} ${path}: ${describeGhostError(res.status, data, res)}`, {
           status: res.status,
           body: data ?? text,
         });

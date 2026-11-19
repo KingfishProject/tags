@@ -96,3 +96,14 @@ test('update sends every field, clearing unset ones', async () => {
   assert.equal(body.tags[0].visibility, 'public');
   assert.equal(Object.keys(body.tags[0]).length, 15);
 });
+
+test('a block page in front of Ghost is explained', async () => {
+  const s = await server((req, res) => {
+    res.writeHead(403, { 'content-type': 'text/html', server: 'cloudflare' });
+    res.end('<html>blocked</html>');
+  });
+  const { port } = s.address();
+  const client = createGhostClient({ url: `http://127.0.0.1:${port}`, adminKey: KEY, sleep: async () => {} });
+  await assert.rejects(client.listTags(), /HTTP 403 from "cloudflare", not a response from Ghost\. .*Cloudflare bot protection/);
+  s.close();
+});
