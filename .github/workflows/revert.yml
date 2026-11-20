@@ -54,11 +54,14 @@ jobs:
           CLOUDFLARE_BYPASS_TOKEN: ${{ secrets.CLOUDFLARE_BYPASS_TOKEN }}
         run: >-
           node scripts/deploy.js --mode revert
-          --source "revert of #${{ github.event.pull_request.number }}"
+          --source "revert of PR ${{ github.event.pull_request.number }}"
           --state "$RUNNER_TEMP/state.json"
           --state-out "$RUNNER_TEMP/new-state.json"
           --pr-body "$RUNNER_TEMP/pr-body.md"
 
       - name: Record the new state
         if: steps.revert.outputs.status == 'done'
-        run: scripts/save-state.sh "$RUNNER_TEMP/new-state.json" "Reverted Ghost changes from #${{ github.event.pull_request.number }}"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          scripts/save-state.sh "$RUNNER_TEMP/new-state.json" "Reverted Ghost changes from PR $PR"
