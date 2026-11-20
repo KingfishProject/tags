@@ -3,13 +3,15 @@
 //
 //   node scripts/deploy.js --mode release --source v1.2.0 --state state.json --state-out new-state.json [--dry-run] [--force]
 //   node scripts/deploy.js --mode revert --state state.json --state-out new-state.json [--pr-body body.md]
+//   node scripts/deploy.js --mode accept --state state.json --state-out new-state.json [--pr-body body.md]
+//     (accept changes nothing in Ghost; it records merged Ghost changes as the new baseline)
 //
 // Needs GHOST_API_URL and GHOST_ADMIN_API_KEY.
 import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { clientFromEnv } from '../src/ghost.js';
 import { loadState, saveState } from '../src/state.js';
-import { runDeploy, runRevert } from '../src/sync.js';
+import { runDeploy, runRevert, runAccept } from '../src/sync.js';
 import { deployReport } from '../src/report.js';
 import { readFingerprintMarker } from '../src/drift.js';
 import { annotate, main, setOutput, writeReport } from '../src/cli.js';
@@ -30,7 +32,7 @@ const { values } = parseArgs({
 
 const BLOCKED = {
   'blocked-drift':
-    'Tags were changed in Ghost since the last release, and this release doesn\'t include those changes. Merge or close the "Changes made in Ghost" pull request, then publish the release again (or re-run this job). To overwrite Ghost anyway, run this workflow by hand with "force" ticked.',
+    'Tags were changed in Ghost, and this release doesn\'t include those changes. Deal with the "Changes made in Ghost" pull request first. If you close it, re-run this job. If you merge it, publish a new release from main (this release was made before the merge, so it would undo the Ghost changes). If there is no such pull request yet, it will open within a few minutes. To overwrite Ghost anyway, run this workflow by hand with "force" ticked.',
 };
 
 main(async () => {
@@ -38,11 +40,25 @@ main(async () => {
   const client = clientFromEnv();
   const tagsDir = values['tags-dir'];
 
+  let fingerprint = null;
+  if (values['pr-body'] && fs.existsSync(values['pr-body'])) {
+    fingerprint = readFingerprintMarker(fs.readFileSync(values['pr-body'], 'utf8'));
+  }
+
+  if (values.mode === 'accept') {
+    const r = await runAccept({ client, tagsDir, state, fingerprint, source: values.source });
+    setOutput('status', r.status);
+    writeReport(
+      values.report,
+      r.status === 'done'
+        ? `## Record merged Ghost changes\n\nRecorded ${r.accepted} merged change(s) as the new starting point. Ghost wasn't changed.\n`
+        : '## Record merged Ghost changes\n\nNothing to record.\n',
+    );
+    if (r.newState && values['state-out']) saveState(values['state-out'], r.newState);
+    return 0;
+  }
+
   if (values.mode === 'revert') {
-    let fingerprint = null;
-    if (values['pr-body'] && fs.existsSync(values['pr-body'])) {
-      fingerprint = readFingerprintMarker(fs.readFileSync(values['pr-body'], 'utf8'));
-    }
     const r = await runRevert({ client, tagsDir, state, fingerprint, source: values.source });
     setOutput('status', r.status);
     if (r.status === 'no-state') {
@@ -62,7 +78,7 @@ main(async () => {
     return r.status === 'failed' ? 1 : 0;
   }
 
-  if (values.mode !== 'release') throw new Error(`Unknown --mode "${values.mode}" (use release or revert).`);
+  if (values.mode !== 'release') throw new Error(`Unknown --mode "${values.mode}" (use release, revert or accept).`);
 
   const r = await runDeploy({ client, tagsDir, state, source: values.source, dryRun: values['dry-run'], force: values.force });
   setOutput('status', r.status);

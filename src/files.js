@@ -4,7 +4,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { fieldsToFile, fileToFields } from './fields.js';
 
-export const KEY_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+export const KEY_PATTERN = /^[a-z0-9_][a-z0-9_-]*$/;
 
 /**
  * Load every tags/<key>.yaml file.
@@ -25,7 +25,7 @@ export function loadRepoTags(dir) {
     if (!fs.statSync(file).isFile()) continue;
     const key = name.replace(/\.ya?ml$/i, '');
     if (!KEY_PATTERN.test(key)) {
-      problems.push({ file, message: `file name "${name}" must be lowercase letters, numbers and hyphens, ending in .yaml` });
+      problems.push({ file, message: `file name "${name}" must be lowercase letters, numbers, underscores and hyphens, ending in .yaml` });
       continue;
     }
     if (tags.has(key)) {

@@ -256,3 +256,128 @@ test('edited in Ghost after being deleted in GitHub', async () => {
   assert.deepEqual(r.changes.map((c) => c.kind), ['restored']);
   assert.equal(loadRepoTagsStrict(dir).get('sports').description, 'Edited in Ghost');
 });
+
+// --- Fixes from review ---------------------------------------------------
+
+import { runAccept } from '../src/sync.js';
+
+/** Pull into a copy of main, as the drift PR branch would. Returns the result and the branch dir. */
+async function pullToBranch(dir, ghost, state) {
+  const branch = tmpDir();
+  fs.cpSync(dir, branch, { recursive: true });
+  const r = await runPull({ client: ghost, tagsDir: branch, state });
+  return { r, branch };
+}
+
+/** Merge the drift PR: main becomes the branch, then the accept job runs. */
+async function mergeDrift(dir, ghost, state) {
+  const { r, branch } = await pullToBranch(dir, ghost, state);
+  fs.rmSync(dir, { recursive: true });
+  fs.cpSync(branch, dir, { recursive: true });
+  const a = await runAccept({ client: ghost, tagsDir: dir, state, fingerprint: fingerprint(r.changes), source: 'import' });
+  return a.status === 'done' ? asState(a.newState) : state;
+}
+
+test('renaming a tag file keeps the Ghost tag and its posts', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  ghost.edit('news', { posts: 40 });
+  const id = ghost.bySlug('news').id;
+  fs.renameSync(path.join(dir, 'news.yaml'), path.join(dir, 'local-news.yaml'));
+  writeTags(dir, { 'local-news': { ...NEWS, slug: 'local-news' } }); // slug changed too, name kept
+  assert.deepEqual((await runPull({ client: ghost, tagsDir: dir, state })).changes, []);
+  const d = await runDeploy({ client: ghost, tagsDir: dir, state, source: 'v2' });
+  assert.equal(d.status, 'done');
+  assert.deepEqual(d.ops.map((o) => o.op), ['update']);
+  assert.equal(ghost.bySlug('local-news').id, id);
+  assert.equal(ghost.bySlug('local-news').posts, 40);
+  assert.equal(d.newState.tags.get('local-news').id, id);
+});
+
+test('a delete plus a new tag with the same name is refused', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  ghost.edit('news', { posts: 3 });
+  fs.rmSync(path.join(dir, 'news.yaml'));
+  // Two new files with the old name, so which one is the rename is ambiguous.
+  writeTags(dir, { a: { name: 'News', slug: 'a' }, b: { name: 'News', slug: 'b' } });
+  const d = await runDeploy({ client: ghost, tagsDir: dir, state, source: 'v2' });
+  assert.equal(d.status, 'blocked-deletes');
+  assert.match(d.guard, /brand-new tag/);
+});
+
+test('swapping two slugs works instead of Ghost adding "-2"', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS, sports: SPORTS });
+  writeTags(dir, { news: { ...NEWS, slug: 'sports' }, sports: { ...SPORTS, slug: 'news' } });
+  const d = await runDeploy({ client: ghost, tagsDir: dir, state, source: 'v2' });
+  assert.equal(d.status, 'done', JSON.stringify(d.failed?.map((f) => f.error.message)));
+  assert.equal(ghost.bySlug('sports').name, 'News');
+  assert.equal(ghost.bySlug('news').name, 'Sports');
+});
+
+test('a slug Ghost changes on save fails the deploy instead of being recorded', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  // Someone grabs the slug in Ghost between the plan and the update.
+  const client = {
+    ...ghost,
+    async updateTag(id, f) {
+      ghost.add({ name: 'Squatter', slug: f.slug });
+      return ghost.updateTag(id, f);
+    },
+  };
+  writeTags(dir, { news: { ...NEWS, slug: 'headlines' } });
+  const d = await runDeploy({ client, tagsDir: dir, state, source: 'v2' });
+  assert.equal(d.status, 'failed');
+  assert.match(d.failed[0].error.message, /Ghost saved something different/);
+  assert.equal(d.newState, undefined);
+});
+
+test('after merging a Ghost edit, editing it again in GitHub is not drift', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  ghost.edit('news', { description: 'Ghost edit' });
+  const s2 = await mergeDrift(dir, ghost, state);
+  writeTags(dir, { news: { ...NEWS, description: 'Then tweaked in GitHub' } });
+  assert.deepEqual((await runPull({ client: ghost, tagsDir: dir, state: s2 })).changes, []);
+  const d = await runDeploy({ client: ghost, tagsDir: dir, state: s2, source: 'v2' });
+  assert.equal(d.status, 'done');
+  assert.equal(ghost.bySlug('news').description, 'Then tweaked in GitHub');
+});
+
+test('a Ghost-created tag that was merged keeps its ID through a Ghost rename', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  const id = ghost.add({ name: 'Elections', slug: 'elections' });
+  const s2 = await mergeDrift(dir, ghost, state);
+  assert.equal(s2.tags.get('elections').id, id);
+  ghost.edit('elections', { slug: 'elections-2026' });
+  const { r } = await pullToBranch(dir, ghost, s2);
+  assert.deepEqual(r.changes.map((c) => [c.key, c.kind]), [['elections', 'changed']]);
+});
+
+test('editing an imported tag before the first release is not drift', async () => {
+  const dir = tmpDir();
+  const ghost = fakeGhost([NEWS, SPORTS]);
+  const s1 = await mergeDrift(dir, ghost, emptyState());
+  assert.equal(s1.exists, true);
+  assert.equal(s1.tags.size, 2);
+  writeTags(dir, { news: { ...NEWS, description: 'Edited before first release' } });
+  const d = await runDeploy({ client: ghost, tagsDir: dir, state: s1, source: 'v1' });
+  assert.equal(d.status, 'done');
+  assert.equal(ghost.bySlug('news').description, 'Edited before first release');
+});
+
+test('only merged changes are recorded, and Ghost is not touched', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  ghost.edit('news', { description: 'Ghost edit' });
+  const before = ghost.calls.length;
+  // Merge happened, then someone reverted the file on main before the accept job ran.
+  const { r } = await pullToBranch(dir, ghost, state);
+  const a = await runAccept({ client: ghost, tagsDir: dir, state, fingerprint: fingerprint(r.changes) });
+  assert.equal(a.status, 'nothing');
+  assert.deepEqual(ghost.calls.slice(before).filter((c) => c[0] !== 'list'), []);
+});
+
+test('the PR warns that closing deletes a Ghost-created tag from its posts', async () => {
+  const { dir, ghost, state } = await synced({ news: NEWS });
+  ghost.add({ name: 'Elections', slug: 'elections' });
+  ghost.edit('elections', { posts: 7 });
+  const { r } = await pullToBranch(dir, ghost, state);
+  assert.match(driftPrBody({ ...r, state }), /Closing \*\*deletes it from Ghost\*\*\. It's already on 7 posts/);
+});

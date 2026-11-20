@@ -27,6 +27,12 @@ export function fakeGhost(initial = []) {
     tags.set(id, { ...toGhostPayload(fields(t)), id, posts: t.posts ?? 0 });
   }
   const view = (t) => ({ ...t, count: { posts: t.posts } });
+  // Like Ghost: a slug another tag already uses gets "-2" added, silently.
+  const uniqueSlug = (slug, id) => {
+    let s = slug;
+    for (let n = 2; [...tags.values()].some((t) => t.slug === s && t.id !== id); n++) s = `${slug}-${n}`;
+    return s;
+  };
   return {
     calls,
     tags,
@@ -53,12 +59,14 @@ export function fakeGhost(initial = []) {
       calls.push(['create', f.slug]);
       const id = nextId();
       tags.set(id, { ...toGhostPayload(f), id, posts: 0 });
+      tags.get(id).slug = uniqueSlug(f.slug, id);
       return view(tags.get(id));
     },
     async updateTag(id, f) {
       calls.push(['update', f.slug]);
       if (!tags.has(id)) throw new Error('not found');
       tags.set(id, { ...tags.get(id), ...toGhostPayload(f) });
+      tags.get(id).slug = uniqueSlug(f.slug, id);
       return view(tags.get(id));
     },
     async deleteTag(id) {

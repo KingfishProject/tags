@@ -57,3 +57,36 @@ export function assignKeys(ghostTags, snapshot, ours) {
   }
   return { byKey, newKeys };
 }
+
+/**
+ * Notice tag files that were renamed (tags/news.yaml -> tags/local-news.yaml)
+ * since the last sync, and move the snapshot entry to the new file name.
+ * Without this, a rename would look like "delete news, create local-news",
+ * and deleting a Ghost tag strips it from every post.
+ *
+ * A file counts as renamed when its old name is gone, a new name appeared, and
+ * exactly one new file has the old slug (or, failing that, the old name).
+ *
+ * @returns {Map<string, {id, fields}>} the snapshot, re-keyed
+ */
+export function followRenames(snapshot, ours) {
+  const gone = [...snapshot.keys()].filter((k) => !ours.has(k));
+  const fresh = [...ours.keys()].filter((k) => !snapshot.has(k));
+  if (!gone.length || !fresh.length) return snapshot;
+
+  const pick = (oldKey, field) => fresh.filter((n) => ours.get(n)[field] && ours.get(n)[field] === snapshot.get(oldKey).fields[field]);
+  const proposals = new Map();
+  for (const oldKey of gone) {
+    let found = pick(oldKey, 'slug');
+    if (!found.length) found = pick(oldKey, 'name');
+    if (found.length === 1) proposals.set(oldKey, found[0]);
+  }
+  const targets = [...proposals.values()];
+  const renamed = new Map(snapshot);
+  for (const [oldKey, newKey] of proposals) {
+    if (targets.filter((t) => t === newKey).length !== 1) continue; // ambiguous
+    renamed.set(newKey, renamed.get(oldKey));
+    renamed.delete(oldKey);
+  }
+  return renamed;
+}

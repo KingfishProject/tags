@@ -11,8 +11,10 @@ name: Deploy tags to Ghost
 # Run this workflow by hand with "force" ticked to override either check.
 
 on:
+  # "released" fires when a full release is published, or a pre-release is
+  # promoted to a full release. Pre-releases themselves don't deploy.
   release:
-    types: [published]
+    types: [released]
   workflow_dispatch:
     inputs:
       release:
@@ -31,14 +33,9 @@ permissions:
   contents: write
   actions: write
 
-concurrency:
-  group: ghost-write
-  cancel-in-progress: false
 
 jobs:
   deploy:
-    # Pre-releases don't deploy.
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     env:
       RELEASE: ${{ github.event.release.tag_name || inputs.release }}
@@ -52,6 +49,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/validate.js
+      - name: Wait for earlier sync runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/wait-turn.sh
 
       - name: Fetch last-deployed state
         run: |
@@ -78,6 +79,13 @@ jobs:
       - name: Record what was deployed
         if: steps.deploy.outputs.status == 'done'
         run: scripts/save-state.sh "$RUNNER_TEMP/new-state.json" "Deployed $RELEASE"
+
+      - name: Keep the hourly check switched on
+        # GitHub turns off scheduled workflows after 60 days without commits.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable pull.yml || true
 
       - name: Make sure the Ghost changes have a pull request
         if: failure() && steps.deploy.outputs.status == 'blocked-drift'

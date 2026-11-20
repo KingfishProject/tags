@@ -11,12 +11,10 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
   pull-requests: write
 
-concurrency:
-  group: ghost-pull
-  cancel-in-progress: false
 
 env:
   BRANCH: ghost-sync/drift
@@ -33,6 +31,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Wait for earlier sync runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/wait-turn.sh
 
       - name: Fetch last-deployed state
         run: |

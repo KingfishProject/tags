@@ -48,8 +48,15 @@ function deleteOp(key, tag) {
  * wiping out every tag in Ghost. Returns a reason string, or null if it's fine.
  */
 export function checkDeleteGuard(ops, ghostCount) {
-  const deletes = ops.filter((o) => o.op === 'delete').length;
+  const deleteOps = ops.filter((o) => o.op === 'delete');
+  const deletes = deleteOps.length;
   if (!deletes) return null;
+  for (const d of deleteOps) {
+    const c = ops.find((o) => o.op === 'create' && (o.fields.slug === d.slug || o.fields.name === d.name));
+    if (c && d.posts !== 0) {
+      return `This would delete "${d.slug}" and create "${c.fields.slug}" as a brand-new tag, which would take the tag off its posts. If you renamed a tag file, give the new file the same slug or name as before so it's treated as a rename.`;
+    }
+  }
   if (deletes === ghostCount && ghostCount > 0) {
     return `This would delete every tag in Ghost (${deletes}).`;
   }
@@ -68,6 +75,23 @@ export async function applyPlan(client, ops, log = () => {}) {
   const done = [];
   const failed = [];
   const createdIds = new Map();
+
+  // Slug swaps: if one tag is taking a slug another tag in this plan is giving
+  // up, move the giver to a temporary slug first. Otherwise Ghost would quietly
+  // add "-2" to the slug instead of failing.
+  const updates = ops.filter((o) => o.op === 'update');
+  for (const holder of updates) {
+    const wanted = updates.some((u) => u !== holder && u.fields.slug === holder.before.slug);
+    if (!wanted || holder.fields.slug === holder.before.slug) continue;
+    try {
+      const temp = `${holder.before.slug}-moving-${String(holder.id).slice(-6)}`;
+      await client.updateTag(holder.id, { ...holder.before, slug: temp });
+      log(`moved ${holder.before.slug} to ${temp} to free the slug`);
+    } catch (error) {
+      log(`FAILED to free slug ${holder.before.slug}: ${error.message}`);
+    }
+  }
+
   for (const op of ops) {
     try {
       if (op.op === 'delete') {
@@ -88,4 +112,34 @@ export async function applyPlan(client, ops, log = () => {}) {
     }
   }
   return { done, failed, createdIds };
+}
+
+/**
+ * After applying, check Ghost kept the slug and name it was sent. Ghost can
+ * change a slug without failing (one that's already taken becomes "slug-2"),
+ * and recording that as released would hide the problem. Other fields aren't
+ * checked because Ghost may legitimately rewrite them (image URLs, for example).
+ * Returns failures in the same shape as applyPlan's.
+ */
+export function verifyApplied(ops, idFor, ghostTags) {
+  const byId = new Map(ghostTags.map((t) => [t.id, t]));
+  const failed = [];
+  for (const op of ops) {
+    const id = op.op === 'create' ? idFor(op.key) : op.id;
+    const tag = id ? byId.get(id) : undefined;
+    if (op.op === 'delete') {
+      if (tag) failed.push({ op, error: new Error('the tag is still in Ghost') });
+      continue;
+    }
+    if (!tag) {
+      failed.push({ op, error: new Error('the tag is missing from Ghost') });
+      continue;
+    }
+    const off = ['slug', 'name'].filter((f) => (tag[f] ?? null) !== (op.fields[f] ?? null));
+    if (off.length) {
+      const detail = off.map((f) => `${f}: sent ${JSON.stringify(op.fields[f])}, Ghost has ${JSON.stringify(tag[f])}`).join('; ');
+      failed.push({ op, error: new Error(`Ghost saved something different (${detail}). Another tag probably already uses that slug.`) });
+    }
+  }
+  return failed;
 }

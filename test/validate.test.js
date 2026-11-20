@@ -73,3 +73,11 @@ test('a "#" inside a multi-line description is fine', () => {
   assert.equal(errors.length, 1);
   assert.equal(errors[0].line, 7);
 });
+
+test('relative URLs are refused, underscores in slugs are fine', () => {
+  const dir = tmpDir();
+  writeTags(dir, { a_b: { name: 'A', slug: 'a_b', canonical_url: '/tag/a/' } });
+  const msgs = check(dir).errors.map((e) => e.message);
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0], /full address/);
+});

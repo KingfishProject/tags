@@ -1,19 +1,17 @@
 name: Revert Ghost changes
 
 # When the "Changes made in Ghost" pull request is closed without merging,
-# put Ghost back the way this repo has it. Only the changes listed in that
-# pull request are undone.
+# put Ghost back the way it was at the last sync. Only the changes listed in
+# that pull request are undone.
 
 on:
   pull_request_target:
     types: [closed]
 
 permissions:
+  actions: read
   contents: write
 
-concurrency:
-  group: ghost-write
-  cancel-in-progress: false
 
 jobs:
   revert:
@@ -32,6 +30,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Wait for earlier sync runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/wait-turn.sh
 
       - name: Fetch last-deployed state
         run: |

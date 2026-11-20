@@ -1,7 +1,7 @@
 // Find changes made directly in Ghost, using a three-way comparison.
 import crypto from 'node:crypto';
 import { FIELD_NAMES, ghostToFields, differingFields } from './fields.js';
-import { assignKeys } from './match.js';
+import { assignKeys, followRenames } from './match.js';
 
 /**
  * Kinds of change:
@@ -59,12 +59,15 @@ export function computeDrift({ base, ghost, ours }) {
  * Match Ghost tags to keys and run the comparison.
  * @returns {{ changes, byKey, newKeys, ghostFields }}
  */
-export function detectDrift({ ghostTags, state, ours }) {
-  const { byKey, newKeys } = assignKeys(ghostTags, state.tags, ours);
+export function detectDrift({ ghostTags, state, ours, compareTo }) {
+  const snapshot = followRenames(state.tags, ours);
+  const { byKey, newKeys } = assignKeys(ghostTags, snapshot, ours);
   const ghostFields = new Map([...byKey].map(([k, t]) => [k, ghostToFields(t)]));
-  const base = new Map([...state.tags].map(([k, e]) => [k, e.fields]));
-  const changes = computeDrift({ base, ghost: ghostFields, ours });
-  return { changes, byKey, newKeys, ghostFields };
+  const base = new Map([...snapshot].map(([k, e]) => [k, e.fields]));
+  // compareTo 'base' reports every Ghost change since the last sync, merged or not.
+  const changes = computeDrift({ base, ghost: ghostFields, ours: compareTo === 'base' ? base : ours });
+  for (const c of changes) c.posts = byKey.get(c.key)?.count?.posts ?? null;
+  return { changes, byKey, newKeys, ghostFields, snapshot, base };
 }
 
 /** Repo edits that accept the Ghost changes. Returns [{op:'write'|'delete', key, fields?}]. */

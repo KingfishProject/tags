@@ -36,7 +36,8 @@ function fieldsTable(fields) {
 
 export function describeChange(c) {
   if (c.kind === 'created') {
-    return `### ➕ ${tagTitle(c.key, c.ghost)} was created in Ghost\n\nMerging adds \`tags/${c.key}.yaml\`.\n\n${fieldsTable(c.ghost)}`;
+    const posts = c.posts ? ` It's already on ${c.posts} post${c.posts === 1 ? '' : 's'}, and Ghost will take it off ${c.posts === 1 ? 'that post' : 'them'}.` : '';
+    return `### ➕ ${tagTitle(c.key, c.ghost)} was created in Ghost\n\nMerging adds \`tags/${c.key}.yaml\`. Closing **deletes it from Ghost**.${posts}\n\n${fieldsTable(c.ghost)}`;
   }
   if (c.kind === 'deleted') {
     const warn = c.conflict ? '\n\n> ⚠️ This tag was also edited in GitHub since the last release.' : '';
@@ -70,23 +71,23 @@ function counts(changes) {
 
 function baselineLine(state) {
   if (!state.exists) {
-    return 'Nothing has been released to Ghost from this repo yet, so every Ghost tag shows up here. Merge this PR to import them, then publish a release.';
+    return "This repo hasn't been set up yet, so every Ghost tag shows up here. Merge this PR to import them. Until it's merged, it keeps reopening.";
   }
   const when = state.deployedAt ? ` on ${state.deployedAt.slice(0, 10)}` : '';
-  return `Compared with what the last release (\`${cell(state.source ?? 'unknown', 60)}\`) put in Ghost${when}.`;
+  return `Compared with the last time Ghost and this repo were in sync (release \`${cell(state.source ?? 'unknown', 60)}\`${when}, plus any "Changes made in Ghost" PRs merged since).`;
 }
 
 /** The body of the "Changes made in Ghost" pull request. */
 export function driftPrBody({ changes, state, validation }) {
   const parts = [
-    `Someone changed tags directly in Ghost. **${counts(changes)}.**`,
+    `Tags were changed directly in Ghost. **${counts(changes)}.**`,
     baselineLine(state),
     [
       '**What to do**',
       '- **Merge** to keep the Ghost changes. They stay in Ghost and become part of this repo.',
       state.exists
-        ? '- **Close** to throw them away. Ghost is put back to match this repo straight away.'
-        : '- **Close** to skip the import for now. (Nothing is reverted until the first release.)',
+        ? '- **Close** to throw them away. Ghost is put back the way it was at the last sync, straight away. (Edits in GitHub that are not released yet still go out at the next release.)'
+        : "- **Close** does nothing until the import has been merged once, and this PR will reopen.",
       "- **Keep some, not others:** merge, then open a follow-up PR that undoes the parts you don't want. The next release sends the final version to Ghost.",
       '',
       "This PR is updated automatically while it's open. Edits pushed to this branch get overwritten, so make follow-up changes in a separate PR.",

@@ -1,11 +1,13 @@
 // Rules every tag file must follow before it can be released to Ghost.
 import { FIELDS } from './fields.js';
 
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SLUG = /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/;
 const COLOR = /^#[0-9a-fA-F]{6}$/;
 
 function checkUrl(value) {
-  if (value.startsWith('/')) return null; // relative to the Ghost site
+  // Ghost stores relative URLs but returns them as full ones, which would look
+  // like a change at every release. So require the full address.
+  if (value.startsWith('/')) return 'must be a full address, like https://example.com' + value;
   try {
     const u = new URL(value);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'must start with https:// (or http://)';
@@ -45,7 +47,7 @@ export function validateTags(tags, loadProblems = []) {
         if (problem) errors.push({ file, message: `${f.label} ${problem}` });
       }
       if (f.kind === 'slug' && !SLUG.test(value)) {
-        errors.push({ file, message: `slug "${value}" may only use lowercase letters, numbers and single hyphens` });
+        errors.push({ file, message: `slug "${value}" may only use lowercase letters, numbers, underscores and single hyphens` });
       }
       if (f.kind === 'text' && f.ghost !== 'description' && /[\r\n]/.test(value)) {
         warnings.push({ file, message: `${f.label} contains a line break` });
