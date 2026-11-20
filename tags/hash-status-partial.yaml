@@ -1,0 +1,4 @@
+name: "#status-partial"
+slug: hash-status-partial
+description: "Records lifecycle: partial production received, request still open."
+color: "#0D9488"

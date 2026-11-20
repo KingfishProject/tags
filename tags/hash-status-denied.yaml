@@ -1,0 +1,4 @@
+name: "#status-denied"
+slug: hash-status-denied
+description: "Records lifecycle: denied in whole. Feeds the denials accountability page."
+color: "#DC2626"

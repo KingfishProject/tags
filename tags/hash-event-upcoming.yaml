@@ -1,0 +1,4 @@
+name: "#event-upcoming"
+slug: hash-event-upcoming
+description: "Event lifecycle: agenda posted, meeting not yet held."
+color: "#2563EB"

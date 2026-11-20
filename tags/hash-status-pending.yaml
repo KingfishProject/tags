@@ -1,0 +1,4 @@
+name: "#status-pending"
+slug: hash-status-pending
+description: "Records lifecycle: filed, awaiting response. Swap, don't stack."
+color: "#D97706"
