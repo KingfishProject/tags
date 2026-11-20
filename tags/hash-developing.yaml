@@ -1,0 +1,4 @@
+name: "#developing"
+slug: hash-developing
+description: Renders a "Developing" label on the card and page. Remove when the story settles.
+color: "#EA580C"

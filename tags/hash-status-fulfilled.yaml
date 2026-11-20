@@ -1,0 +1,4 @@
+name: "#status-fulfilled"
+slug: hash-status-fulfilled
+description: "Records lifecycle: production complete."
+color: "#16A34A"

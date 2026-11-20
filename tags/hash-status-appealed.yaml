@@ -1,0 +1,4 @@
+name: "#status-appealed"
+slug: hash-status-appealed
+description: "Records lifecycle: denial under appeal or in litigation."
+color: "#7C3AED"
