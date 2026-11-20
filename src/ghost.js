@@ -2,6 +2,9 @@
 import crypto from 'node:crypto';
 import { toGhostPayload } from './fields.js';
 
+/** Header carrying the CLOUDFLARE_BYPASS_TOKEN secret, if one is set. */
+export const BYPASS_HEADER = 'X-Ghost-Tags-Sync';
+
 export class GhostApiError extends Error {
   constructor(message, { status, body } = {}) {
     super(message);
@@ -50,7 +53,7 @@ function describeGhostError(status, body, res) {
     const via = server ? ` from "${server}"` : '';
     const hint =
       status === 403 || status === 503
-        ? ' Something in front of Ghost (often Cloudflare bot protection or a firewall rule) is blocking the request. Let requests to /ghost/api/admin/ through for GitHub Actions.'
+        ? ' Something in front of Ghost (often Cloudflare bot protection or a firewall rule) is blocking the request. See "Cloudflare" in the README.'
         : status === 404
           ? ' Check that GHOST_API_URL is the address Ghost Admin runs on, not a separate front-end site.'
           : '';
@@ -62,6 +65,7 @@ function describeGhostError(status, body, res) {
 export function createGhostClient({
   url,
   adminKey,
+  bypassToken = null,
   fetchImpl = globalThis.fetch,
   acceptVersion = 'v5.0',
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
@@ -84,6 +88,9 @@ export function createGhostClient({
             Authorization: `Ghost ${makeAdminToken(adminKey)}`,
             'Accept-Version': acceptVersion,
             'Content-Type': 'application/json',
+            'User-Agent': 'ghost-tags-sync',
+            // Lets a Cloudflare rule skip its bot challenge for this job only.
+            ...(bypassToken ? { [BYPASS_HEADER]: bypassToken } : {}),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
         });
@@ -161,5 +168,5 @@ export function clientFromEnv(env = process.env) {
   if (missing.length) {
     throw new Error(`Missing ${missing.join(' and ')}. Add them under Settings → Secrets and variables → Actions.`);
   }
-  return createGhostClient({ url, adminKey });
+  return createGhostClient({ url, adminKey, bypassToken: env.CLOUDFLARE_BYPASS_TOKEN || null });
 }

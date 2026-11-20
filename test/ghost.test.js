@@ -107,3 +107,20 @@ test('a block page in front of Ghost is explained', async () => {
   await assert.rejects(client.listTags(), /HTTP 403 from "cloudflare", not a response from Ghost\. .*Cloudflare bot protection/);
   s.close();
 });
+
+test('bypass header is sent only when configured', async () => {
+  const headers = [];
+  const s = await server((req, res) => {
+    headers.push(req.headers);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ tags: [], meta: { pagination: { next: null } } }));
+  });
+  const { port } = s.address();
+  const url = `http://127.0.0.1:${port}`;
+  await createGhostClient({ url, adminKey: KEY }).listTags();
+  await createGhostClient({ url, adminKey: KEY, bypassToken: 's3cret' }).listTags();
+  s.close();
+  assert.equal(headers[0]['x-ghost-tags-sync'], undefined);
+  assert.equal(headers[1]['x-ghost-tags-sync'], 's3cret');
+  assert.equal(headers[1]['user-agent'], 'ghost-tags-sync');
+});

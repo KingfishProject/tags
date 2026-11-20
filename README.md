@@ -87,11 +87,30 @@ When a "Changes made in Ghost" pull request rewrites a file, it rewrites the who
 2. **Add repository secrets** under Settings → Secrets and variables → Actions:
    - `GHOST_API_URL`: your site address, such as `https://example.com`
    - `GHOST_ADMIN_API_KEY`: the Admin API key (it looks like `abc123…:def456…`)
+   - `CLOUDFLARE_BYPASS_TOKEN` (optional): only needed if Cloudflare blocks the jobs. See [Cloudflare](#cloudflare) below.
 3. **Let Actions open pull requests.** Settings → Actions → General → Workflow permissions: tick **Allow GitHub Actions to create and approve pull requests**. If the option is greyed out, it has to be turned on in the organization's settings first.
 4. **Import the current tags.** Go to Actions → **Pull changes from Ghost** → Run workflow. It opens a pull request adding a file for every tag in Ghost. Review and merge it.
 5. **Publish the first release** (for example `v1.0.0`). Ghost already matches, so nothing changes, but this records the starting point that later syncs compare against.
 
 From then on, the hourly check and releases take care of themselves.
+
+### Cloudflare
+
+If Ghost sits behind Cloudflare, Cloudflare may challenge requests from GitHub Actions as bots. A challenge shows up as `HTTP 403 from "cloudflare", not a response from Ghost`. The jobs can't solve a challenge, so tell Cloudflare to let them through. To keep the admin API protected from everyone else, allow only requests that carry a secret header:
+
+1. Make a long random value, for example with `openssl rand -hex 32`.
+2. Save it as a repository secret named `CLOUDFLARE_BYPASS_TOKEN`. The jobs send it in an `X-Ghost-Tags-Sync` header.
+3. In Cloudflare, open the zone → Security → Security rules (WAF custom rules) → Create rule:
+   - **Name:** Ghost tags sync
+   - **Expression** (use "Edit expression", and put in your own host and token):
+     ```
+     (http.host eq "ghost.kingfish.la" and starts_with(http.request.uri.path, "/ghost/api/admin/") and any(http.request.headers["x-ghost-tags-sync"][*] eq "PASTE-THE-TOKEN-HERE"))
+     ```
+   - **Action:** Skip. Tick every option offered, including Super Bot Fight Mode and Security Level if they're listed.
+   - **Place it first** in the rule list, so it runs before the rule that challenges.
+4. Re-run the failed job.
+
+To find out what issued the challenge, open Security → Events and click the blocked request. The **Service** field says which feature it was. The free plan's **Bot Fight Mode** can't be skipped by a rule. If that's what is challenging, either turn it off for the zone or point `GHOST_API_URL` at an address for Ghost that isn't proxied through Cloudflare.
 
 ## The workflows
 
