@@ -1,0 +1,95 @@
+name: Pull changes from Ghost
+
+# Every hour, look for tags that were changed directly in Ghost. If there are
+# any, open (or update) a pull request named "Changes made in Ghost".
+#   Merge it  -> keep the Ghost changes.
+#   Close it  -> Ghost is put back to match this repo (see revert.yml).
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+
+env:
+  BRANCH: ghost-sync/drift
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Wait for earlier sync runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/wait-turn.sh
+
+      - name: Fetch last-deployed state
+        run: |
+          if git fetch --quiet --depth=1 origin ghost-state; then
+            git show FETCH_HEAD:state.json > "$RUNNER_TEMP/state.json"
+          else
+            echo "Nothing has been deployed yet; every Ghost tag will be offered as an import."
+          fi
+
+      - name: Compare Ghost with this repo
+        id: pull
+        env:
+          GHOST_API_URL: ${{ secrets.GHOST_API_URL }}
+          GHOST_ADMIN_API_KEY: ${{ secrets.GHOST_ADMIN_API_KEY }}
+          CLOUDFLARE_BYPASS_TOKEN: ${{ secrets.CLOUDFLARE_BYPASS_TOKEN }}
+        run: node scripts/pull.js --state "$RUNNER_TEMP/state.json" --report "$RUNNER_TEMP/pr-body.md"
+
+      - name: Open or update the pull request
+        if: steps.pull.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -A tags
+          git commit --quiet -m "Pull tag changes from Ghost"
+
+          # Only push when the content changed, so the PR doesn't fill up with
+          # identical force-pushes every hour.
+          if git fetch --quiet --depth=1 origin "$BRANCH" 2>/dev/null \
+             && [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse 'FETCH_HEAD^{tree}')" ]; then
+            echo "Branch already up to date."
+          else
+            git push --force origin "$BRANCH"
+          fi
+
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --body-file "$RUNNER_TEMP/pr-body.md"
+            echo "Updated #$pr"
+          else
+            gh pr create --base "$BASE" --head "$BRANCH" \
+              --title "Changes made in Ghost" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
+
+      - name: Close the pull request if Ghost matches again
+        if: steps.pull.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr close "$pr" --delete-branch \
+              --comment "Ghost matches this repo again, so there's nothing left to review. Closing automatically. (This doesn't change anything in Ghost.)"
+          fi

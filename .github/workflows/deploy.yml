@@ -1,0 +1,94 @@
+name: Deploy tags to Ghost
+
+# Publishing a GitHub release makes Ghost match the tag files in that release:
+# tags are created, updated, and deleted as needed. Merging to main alone does
+# not change Ghost.
+#
+# The deploy stops without changing anything if:
+#   - Ghost has edits that haven't been reviewed yet (an open "Changes made in
+#     Ghost" pull request). Merge or close it first.
+#   - It would delete more than half of the tags in Ghost.
+# Run this workflow by hand with "force" ticked to override either check.
+
+on:
+  # "released" fires when a full release is published, or a pre-release is
+  # promoted to a full release. Pre-releases themselves don't deploy.
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag to deploy (for example v1.4.0)
+        required: true
+      dry_run:
+        description: Only show what would change
+        type: boolean
+        default: false
+      force:
+        description: Deploy even if Ghost has unreviewed changes or many tags would be deleted
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE: ${{ github.event.release.tag_name || inputs.release }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.RELEASE }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/validate.js
+      - name: Wait for earlier sync runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/wait-turn.sh
+
+      - name: Fetch last-deployed state
+        run: |
+          if git fetch --quiet --depth=1 origin ghost-state; then
+            git show FETCH_HEAD:state.json > "$RUNNER_TEMP/state.json"
+          else
+            echo "First deploy."
+          fi
+
+      - name: Deploy
+        id: deploy
+        env:
+          GHOST_API_URL: ${{ secrets.GHOST_API_URL }}
+          GHOST_ADMIN_API_KEY: ${{ secrets.GHOST_ADMIN_API_KEY }}
+          CLOUDFLARE_BYPASS_TOKEN: ${{ secrets.CLOUDFLARE_BYPASS_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          args=(--mode release --source "$RELEASE" --state "$RUNNER_TEMP/state.json" --state-out "$RUNNER_TEMP/new-state.json")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ "$FORCE" = "true" ] && args+=(--force)
+          node scripts/deploy.js "${args[@]}"
+
+      - name: Record what was deployed
+        if: steps.deploy.outputs.status == 'done'
+        run: scripts/save-state.sh "$RUNNER_TEMP/new-state.json" "Deployed $RELEASE"
+
+      - name: Keep the hourly check switched on
+        # GitHub turns off scheduled workflows after 60 days without commits.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable pull.yml || true
+
+      - name: Make sure the Ghost changes have a pull request
+        if: failure() && steps.deploy.outputs.status == 'blocked-drift'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pull.yml --ref "${{ github.event.repository.default_branch }}"
