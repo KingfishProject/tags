@@ -50,7 +50,8 @@ function describeGhostError(status, body, res) {
   if (!first) {
     // Not a Ghost error, so something in front of Ghost answered instead.
     const server = res?.headers?.get?.('server');
-    const via = server ? ` from "${server}"` : '';
+    const ray = res?.headers?.get?.('cf-ray');
+    const via = (server ? ` from "${server}"` : '') + (ray ? ` (Cloudflare Ray ID ${ray})` : '');
     const hint =
       status === 403 || status === 503
         ? ' Something in front of Ghost (often Cloudflare bot protection or a firewall rule) is blocking the request. See "Cloudflare" in the README.'
