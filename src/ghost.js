@@ -169,5 +169,5 @@ export function clientFromEnv(env = process.env) {
   if (missing.length) {
     throw new Error(`Missing ${missing.join(' and ')}. Add them under Settings → Secrets and variables → Actions.`);
   }
-  return createGhostClient({ url, adminKey, bypassToken: env.CLOUDFLARE_BYPASS_TOKEN || null });
+  return createGhostClient({ url, adminKey, bypassToken: env.CLOUDFLARE_BYPASS_TOKEN?.trim() || null });
 }
